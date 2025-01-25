@@ -155,7 +155,7 @@
         dest: "/home/{{ docker_user }}/n8n/caddy_config/Caddyfile.temp"
         owner: "{{ docker_user }}"
         group: "{{ docker_user }}"
-        mode: 0644
+        mode: "0644"
 
     - name: Move temp file to final destination
       command: mv "/home/{{ docker_user }}/n8n/caddy_config/Caddyfile.temp" "/home/{{ docker_user }}/n8n/caddy_config/Caddyfile"
