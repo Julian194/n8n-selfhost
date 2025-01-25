@@ -1,0 +1,207 @@
+---
+# This is the main script that sets up your n8n server. It does these things in order:
+
+# 1. User and SSH setup
+#    - Creates a special user for Docker
+#    - Sets up secure SSH access
+#    - Disables password login for better security
+
+# 2. Security setup
+#    - Installs and configures a firewall
+#    - Only allows necessary connections (SSH, web traffic)
+
+# 3. Directory setup
+#    - Creates all needed folders for n8n
+
+# 4. Configuration files
+#    - Creates all the necessary configuration files
+#    - Sets up automatic weekly updates
+
+# 5. Docker setup
+#    - Creates storage spaces for your data
+
+# 6. Final step
+#    - Starts up n8n and makes it available
+
+- name: Setup N8N server
+  hosts: n8n_server
+  become: true
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    # 1. User and SSH setup
+    - name: Create docker user
+      user:
+        name: "{{ docker_user }}"
+        password: "{{ docker_user_password | password_hash('sha512') }}"
+        groups: sudo
+        shell: /bin/bash
+        append: yes
+
+    - name: Allow docker user to use sudo without password
+      lineinfile:
+        path: /etc/sudoers.d/docker-user
+        line: "{{ docker_user }} ALL=(ALL) NOPASSWD:ALL"
+        create: true
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    - name: Add SSH key for docker user
+      authorized_key:
+        user: "{{ docker_user }}"
+        state: present
+        key: "{{ ssh_public_key }}"
+
+    - name: Disable root SSH password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: "PermitRootLogin prohibit-password"
+      notify: Restart SSH service
+
+    - name: Disable password authentication
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication"
+        line: "PasswordAuthentication no"
+      notify: Restart SSH service
+
+    - name: Add docker user to docker group
+      user:
+        name: "{{ docker_user }}"
+        groups: docker
+        append: yes
+
+    - name: Reset SSH connection to allow group changes to take effect
+      meta: reset_connection
+
+    # 2. Security setup
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+        update_cache: true
+
+    - name: Set UFW default policies
+      ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      with_items:
+        - { direction: "incoming", policy: "deny" }
+        - { direction: "outgoing", policy: "allow" }
+
+    - name: Configure UFW rules
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      with_items:
+        - 22 # SSH
+        - 80 # HTTP
+        - 443 # HTTPS
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+      notify: Restart UFW
+
+    # 3. Directory setup
+    - name: Create n8n directory
+      file:
+        path: /home/{{ docker_user }}/n8n
+        state: directory
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: "0755"
+
+    - name: Create Caddy config directory
+      file:
+        path: /home/{{ docker_user }}/n8n/caddy_config
+        state: directory
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: "0755"
+
+    - name: Create local files directory
+      file:
+        path: /home/{{ docker_user }}/n8n/local_files
+        state: directory
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: "0755"
+
+    # 4. Configuration files
+    - name: Create Dockerfile
+      template:
+        src: Dockerfile.j2
+        dest: /home/{{ docker_user }}/n8n/Dockerfile
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: "0644"
+
+    - name: Create docker-compose file
+      template:
+        src: docker-compose.yml.j2
+        dest: /home/{{ docker_user }}/n8n/docker-compose.yml
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: "0644"
+
+    - name: Create Caddy config file as temp
+      template:
+        src: Caddyfile.j2
+        dest: "/home/{{ docker_user }}/n8n/caddy_config/Caddyfile.temp"
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: 0644
+
+    - name: Move temp file to final destination
+      command: mv "/home/{{ docker_user }}/n8n/caddy_config/Caddyfile.temp" "/home/{{ docker_user }}/n8n/caddy_config/Caddyfile"
+
+    - name: Create update script
+      template:
+        src: update-n8n.sh.j2
+        dest: /home/{{ docker_user }}/n8n/update-n8n.sh
+        owner: "{{ docker_user }}"
+        group: "{{ docker_user }}"
+        mode: "0755"
+
+    - name: Add weekly update cron job
+      cron:
+        name: "Update N8N weekly"
+        weekday: "0"
+        hour: "4"
+        minute: "0"
+        user: "{{ docker_user }}"
+        job: "/home/{{ docker_user }}/n8n/update-n8n.sh"
+        state: present
+
+    # 5. Docker setup
+    - name: Create Docker volumes
+      docker_volume:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - caddy_data
+        - n8n_data
+
+    # 6. Finally, start containers
+    - name: Start n8n container
+      community.docker.docker_compose_v2:
+        project_src: /home/{{ docker_user }}/n8n
+        state: present
+        build: always
+
+  handlers:
+    - name: Restart UFW
+      service:
+        name: ufw
+        state: restarted
+
+    - name: Restart SSH service
+      service:
+        name: ssh
+        state: restarted
+      ignore_errors: true

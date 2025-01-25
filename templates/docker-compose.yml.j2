@@ -1,0 +1,38 @@
+services:
+  caddy:
+    container_name: reverse-proxy
+    image: caddy:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - /home/{{ docker_user }}/n8n/caddy_config:/config
+      - /home/{{ docker_user }}/n8n/caddy_config/Caddyfile:/etc/caddy/Caddyfile
+
+  n8n:
+    container_name: n8n
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "{{ n8n_port }}:5678"
+    environment:
+      - N8N_HOST={{ n8n_host }}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://{{ n8n_host }}/
+      - GENERIC_TIMEZONE={{ timezone }}
+      - NODE_FUNCTION_ALLOW_EXTERNAL=inspirational-quotes  # Allow external module
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - /home/{{ docker_user }}/n8n/local_files:/files
+
+volumes:
+  caddy_data:
+    external: true
+  n8n_data:
+    external: true 

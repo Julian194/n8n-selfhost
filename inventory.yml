@@ -1,0 +1,7 @@
+# This file tells Ansible which server to connect to.
+# It specifies the server's IP address and that we should connect as the root user
+all:
+  hosts:
+    n8n_server:
+      ansible_host: YOUR_SERVER_IP
+      ansible_user: root
