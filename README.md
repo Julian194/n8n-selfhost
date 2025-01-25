@@ -94,4 +94,4 @@ environment:
 - Password authentication will be disabled
 - Only SSH key authentication will work
 - Docker user will have sudo access
-- UFW firewall is configured to allow only ports 22, 80, 443, and 5678
+- UFW firewall is configured to allow only ports 22, 80, 443
